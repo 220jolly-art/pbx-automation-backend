@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: pbx-automation-backend
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: ADMIN_TOKEN
+        generateValue: true
+      - key: DATABASE_URL
+        fromDatabase:
+          name: pbx-automation-db
+          property: connectionString
+    healthCheckPath: /api/health
+
+databases:
+  - name: pbx-automation-db
+    plan: free
+    databaseName: pbx_automation
+    user: pbx_user
