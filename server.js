@@ -1215,24 +1215,6 @@ app.get('/api/admin/stats', requireAdmin, asyncHandler(async (req, res) => {
   });
 }));
 
-// --- TEMPORARY test-cleanup (NOT part of the v2 contract) -------------
-// Added only so the live verification run can leave the Neon DB clean
-// (the contract has no DELETE for users/ledger/withdrawals). It deletes
-// every row from every v2 + v1 table, admin-token guarded. It is removed
-// again immediately after the live test run — see commit history.
-app.delete('/api/admin/test-cleanup', requireAdmin, asyncHandler(async (req, res) => {
-  const tx = dbLayer.db.transaction(async () => {
-    for (const t of [
-      'ledger', 'withdrawals', 'earning_submissions', 'task_completions',
-      'task_assignments', 'task_links', 'tasks', 'auth_tokens', 'users',
-      'worker_manual_proxies', 'earning_options', 'worker_proxies',
-      'worker_links', 'worker_settings', 'workers', 'proxies', 'links',
-    ]) await dbLayer.db.exec(`DELETE FROM ${t}`);
-  });
-  await tx();
-  res.json({ ok: true, cleaned: true });
-}));
-
 // --- root status -----------------------------------------------------
 // A plain status page for the deployment root. Without an explicit
 // handler Vercel's rewrite of "/" to the serverless function failed
