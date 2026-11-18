@@ -842,6 +842,10 @@ const q = {
   insertAuthToken: defineQuery('INSERT INTO auth_tokens (token, user_id) VALUES (?, ?)'),
   deleteAuthToken: defineQuery('DELETE FROM auth_tokens WHERE token = ?'),
   deleteUserTokens: defineQuery('DELETE FROM auth_tokens WHERE user_id = ?'),
+  deleteUserCompletions: defineQuery('DELETE FROM task_completions WHERE user_id = ?'),
+  deleteUserWithdrawals: defineQuery('DELETE FROM withdrawals WHERE user_id = ?'),
+  deleteUserAssignments: defineQuery('DELETE FROM task_assignments WHERE user_id = ?'),
+  clearReferredBy: defineQuery('UPDATE users SET referred_by = NULL WHERE referred_by = ?'),
 
   // --- WorkFlowX v2: tasks -----------------------------------------
   listTasks: defineQuery('SELECT * FROM tasks ORDER BY id DESC'),

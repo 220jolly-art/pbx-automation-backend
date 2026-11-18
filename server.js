@@ -1169,6 +1169,26 @@ app.get('/api/users/:id', requireAdmin, asyncHandler(async (req, res) => {
   res.json({ ...publicUser(u), referred_by: u.referred_by, balance: bal, ledger, completions });
 }));
 
+// Delete a user (admin): removes the user and all of their dependent rows
+// (tokens, ledger, completions, withdrawals, submissions, assignments).
+// Users they referred keep their accounts with referred_by cleared.
+// Added to remove test / fake accounts (no contract endpoint covers it).
+app.delete('/api/users/:id', requireAdmin, asyncHandler(async (req, res) => {
+  const u = await dbLayer.q.getUserById.get(req.params.id);
+  if (!u) return res.status(404).json({ error: 'user not found' });
+  await dbLayer.db.transaction(async () => {
+    await dbLayer.q.deleteUserTokens.run(req.params.id);
+    await dbLayer.q.deleteUserLedger.run(req.params.id);
+    await dbLayer.q.deleteUserCompletions.run(req.params.id);
+    await dbLayer.q.deleteUserWithdrawals.run(req.params.id);
+    await dbLayer.q.deleteUserSubmissions.run(req.params.id);
+    await dbLayer.q.deleteUserAssignments.run(req.params.id);
+    await dbLayer.q.clearReferredBy.run(req.params.id);
+    await dbLayer.q.deleteUser.run(req.params.id);
+  })();
+  res.json({ ok: true, deleted: Number(req.params.id) });
+}));
+
 app.get('/api/admin/stats', requireAdmin, asyncHandler(async (req, res) => {
   const today = todayUtc();
   const [users, workers, completionsToday, earningsToday, pendingW, pendingS, recent, pendingWithdrawals] = await Promise.all([
