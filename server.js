@@ -500,6 +500,19 @@ app.post('/api/tasks/failed', asyncHandler(async (req, res) => {
   res.json({ ok: true, link: rowLink(await dbLayer.q.getLink.get(linkId)) });
 }));
 
+// --- root status -----------------------------------------------------
+// A plain status page for the deployment root. Without an explicit
+// handler Vercel's rewrite of "/" to the serverless function failed
+// with FUNCTION_INVOCATION_FAILED instead of reaching the 404 handler.
+app.get('/', (req, res) =>
+  res.json({
+    ok: true,
+    service: 'pbx-automation-backend',
+    version: '1.0.0',
+    health: '/api/health',
+  })
+);
+
 // --- errors / 404 ----------------------------------------------------
 app.use((req, res) => res.status(404).json({ error: 'not found', path: req.path }));
 // eslint-disable-next-line no-unused-vars
