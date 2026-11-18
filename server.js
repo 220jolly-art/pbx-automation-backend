@@ -617,6 +617,13 @@ function rowEarningOption(r) {
     reward: r.reward, config, is_active: !!r.is_active, created_at: r.created_at,
   };
 }
+function rowAnnouncement(r) {
+  if (!r) return null;
+  return {
+    id: r.id, title: r.title, body: r.body || '',
+    is_active: !!r.is_active, created_at: r.created_at,
+  };
+}
 function rowWithdrawal(r) {
   if (!r) return null;
   const base = {
@@ -1086,6 +1093,50 @@ app.post('/api/admin/earning-submissions/:id/reject', requireAdmin, asyncHandler
   res.json(rowSubmission(await dbLayer.q.getSubmissionDetail.get(sub.id)));
 }));
 
+// --- announcements (polish) ------------------------------------------
+// One path, two roles (same pattern as /api/earning-options): a valid
+// X-Admin-Token gets ALL announcements; otherwise a Bearer user token
+// gets the active ones only (the APK feed/banner + polling loop).
+app.get('/api/announcements', asyncHandler(async (req, res) => {
+  const adminToken = req.get('X-Admin-Token') || '';
+  if (ADMIN_TOKEN && adminToken === ADMIN_TOKEN) {
+    return res.json((await dbLayer.q.listAnnouncements.all()).map(rowAnnouncement));
+  }
+  const h = req.get('Authorization') || '';
+  const m = h.match(/^Bearer\s+(.+)$/);
+  if (!m) return res.status(401).json({ error: 'missing bearer token or admin token' });
+  const tok = await dbLayer.q.getAuthToken.get(m[1].trim());
+  if (!tok) return res.status(401).json({ error: 'invalid token' });
+  res.json((await dbLayer.q.listActiveAnnouncements.all()).map(rowAnnouncement));
+}));
+
+app.post('/api/announcements', requireAdmin, asyncHandler(async (req, res) => {
+  const b = req.body || {};
+  const title = String(b.title || '').trim();
+  if (!title) return res.status(400).json({ error: 'title is required' });
+  const info = await dbLayer.q.insertAnnouncement.run(title, String(b.body || ''));
+  res.status(201).json(rowAnnouncement(await dbLayer.q.getAnnouncement.get(info.lastInsertRowid)));
+}));
+
+app.put('/api/announcements/:id', requireAdmin, asyncHandler(async (req, res) => {
+  const a = await dbLayer.q.getAnnouncement.get(req.params.id);
+  if (!a) return res.status(404).json({ error: 'announcement not found' });
+  const b = req.body || {};
+  const title = b.title !== undefined ? String(b.title).trim() : a.title;
+  if (!title) return res.status(400).json({ error: 'title is required' });
+  const body = b.body !== undefined ? String(b.body) : a.body;
+  const is_active = b.is_active !== undefined ? (b.is_active ? 1 : 0) : a.is_active;
+  await dbLayer.q.updateAnnouncement.run(title, body, is_active, a.id);
+  res.json(rowAnnouncement(await dbLayer.q.getAnnouncement.get(a.id)));
+}));
+
+app.delete('/api/announcements/:id', requireAdmin, asyncHandler(async (req, res) => {
+  const a = await dbLayer.q.getAnnouncement.get(req.params.id);
+  if (!a) return res.status(404).json({ error: 'announcement not found' });
+  await dbLayer.q.deleteAnnouncement.run(a.id);
+  res.json({ ok: true, deleted: a.id });
+}));
+
 // --- withdrawals -----------------------------------------------------
 app.post('/api/withdrawals', requireUser, asyncHandler(async (req, res) => {
   const b = req.body || {};
@@ -1233,6 +1284,34 @@ app.get('/api/admin/stats', requireAdmin, asyncHandler(async (req, res) => {
       upi: r.upi, created_at: r.created_at,
     })),
   });
+}));
+
+// Daily trend for the admin dashboard charts (polish): last N days
+// (default 7, 1–30), oldest first, days with no activity filled with
+// zeros. completions = task_completions that day; earnings = ledger
+// credits (task/referral/earning) that day.
+app.get('/api/admin/trends', requireAdmin, asyncHandler(async (req, res) => {
+  let days = parseInt(req.query.days, 10);
+  if (Number.isNaN(days)) days = 7;
+  days = Math.min(Math.max(days, 1), 30);
+  const today = new Date(todayUtc() + 'T00:00:00Z');
+  const dates = [];
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date(today.getTime() - i * 86400000);
+    dates.push(d.toISOString().slice(0, 10));
+  }
+  const start = dates[0];
+  const [comp, earn] = await Promise.all([
+    dbLayer.q.completionsByDay.all(start),
+    dbLayer.q.earningsByDay.all(start),
+  ]);
+  const compByDay = new Map(comp.map((r) => [r.day, r.n]));
+  const earnByDay = new Map(earn.map((r) => [r.day, r.n]));
+  res.json(dates.map((date) => ({
+    date,
+    completions: compByDay.get(date) || 0,
+    earnings: earnByDay.get(date) || 0,
+  })));
 }));
 
 // --- root status -----------------------------------------------------

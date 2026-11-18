@@ -303,6 +303,15 @@ function sqliteInit() {
       decided_at TEXT
     );
 
+    -- WorkFlowX v2 polish: admin announcements shown to workers in the APK.
+    CREATE TABLE IF NOT EXISTS announcements (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT NOT NULL,
+      body TEXT NOT NULL DEFAULT '',
+      is_active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
     CREATE TABLE IF NOT EXISTS worker_manual_proxies (
       worker_id TEXT PRIMARY KEY REFERENCES workers(id) ON DELETE CASCADE,
       host TEXT NOT NULL,
@@ -485,6 +494,15 @@ async function pgInit() {
       status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved','rejected')),
       created_at TEXT NOT NULL DEFAULT to_char(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS'),
       decided_at TEXT
+    );
+
+    -- WorkFlowX v2 polish: admin announcements shown to workers in the APK.
+    CREATE TABLE IF NOT EXISTS announcements (
+      id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+      title TEXT NOT NULL,
+      body TEXT NOT NULL DEFAULT '',
+      is_active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT to_char(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')
     );
 
     CREATE TABLE IF NOT EXISTS worker_manual_proxies (
@@ -1043,6 +1061,30 @@ const q = {
   ),
   deleteOptionSubmissions: defineQuery('DELETE FROM earning_submissions WHERE option_id = ?'),
   deleteUserSubmissions: defineQuery('DELETE FROM earning_submissions WHERE user_id = ?'),
+
+  // --- WorkFlowX v2 polish: announcements + trends ------------------
+  listAnnouncements: defineQuery('SELECT * FROM announcements ORDER BY id DESC'),
+  listActiveAnnouncements: defineQuery("SELECT * FROM announcements WHERE is_active = 1 ORDER BY id DESC"),
+  getAnnouncement: defineQuery('SELECT * FROM announcements WHERE id = ?'),
+  insertAnnouncement: defineQuery(
+    'INSERT INTO announcements (title, body) VALUES (?, ?)',
+    { returningId: true }
+  ),
+  updateAnnouncement: defineQuery(
+    'UPDATE announcements SET title = ?, body = ?, is_active = ? WHERE id = ?'
+  ),
+  deleteAnnouncement: defineQuery('DELETE FROM announcements WHERE id = ?'),
+  // Daily completions / earnings for the admin charts. created_at is TEXT
+  // 'YYYY-MM-DD HH:MM:SS', so substr(...,1,10) groups by UTC day in both
+  // adapters. The server fills days with no rows as zeros.
+  completionsByDay: defineQuery(
+    "SELECT substr(created_at, 1, 10) AS day, COUNT(*) AS n FROM task_completions WHERE substr(created_at, 1, 10) >= ? GROUP BY day ORDER BY day ASC",
+    { pg: "SELECT substr(created_at, 1, 10) AS day, COUNT(*)::int AS n FROM task_completions WHERE substr(created_at, 1, 10) >= $1 GROUP BY day ORDER BY day ASC" }
+  ),
+  earningsByDay: defineQuery(
+    "SELECT substr(created_at, 1, 10) AS day, COALESCE(SUM(amount), 0) AS n FROM ledger WHERE kind IN ('task','referral','earning') AND amount > 0 AND substr(created_at, 1, 10) >= ? GROUP BY day ORDER BY day ASC",
+    { pg: "SELECT substr(created_at, 1, 10) AS day, COALESCE(SUM(amount), 0)::int AS n FROM ledger WHERE kind IN ('task','referral','earning') AND amount > 0 AND substr(created_at, 1, 10) >= $1 GROUP BY day ORDER BY day ASC" }
+  ),
 
   // --- WorkFlowX v2: worker manual proxies -------------------------
   ensureWorker: defineQuery('INSERT OR IGNORE INTO workers (id) VALUES (?)'),
