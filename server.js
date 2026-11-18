@@ -556,4 +556,13 @@ if (require.main === module) {
   });
 }
 
-module.exports = { app, startServer };
+// Vercel also loads this file directly as the "/" serverless function
+// (a root server.js becomes the /index function), and its runtime
+// requires the default export to be a function or server. The Express
+// app IS a function, so export it directly and attach the named
+// helpers as properties: api/index.js destructures { app }, the
+// Electron admin app uses .startServer, and local `node server.js`
+// still starts via the require.main branch above.
+module.exports = app;
+module.exports.app = app;
+module.exports.startServer = startServer;
