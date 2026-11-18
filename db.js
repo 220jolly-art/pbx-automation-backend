@@ -208,6 +208,114 @@ function sqliteInit() {
 
     CREATE INDEX IF NOT EXISTS idx_links_status ON links(status);
     CREATE INDEX IF NOT EXISTS idx_proxies_active ON proxies(is_active);
+
+    -- WorkFlowX v2 tables (see ../v2/API_CONTRACT.md).
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      email TEXT NOT NULL UNIQUE,
+      mobile TEXT NOT NULL UNIQUE,
+      password_hash TEXT NOT NULL,
+      referral_code TEXT NOT NULL UNIQUE,
+      referred_by INTEGER REFERENCES users(id),
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS auth_tokens (
+      token TEXT PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS tasks (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      link_type TEXT NOT NULL DEFAULT 'shortener'
+        CHECK (link_type IN ('shortener','ad','view','video')),
+      script TEXT NOT NULL DEFAULT '[]',
+      reward INTEGER NOT NULL DEFAULT 1,
+      is_active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS task_links (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+      url TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'queued' CHECK (status IN ('queued','done','failed')),
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS task_assignments (
+      task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      PRIMARY KEY (task_id, user_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS task_completions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL REFERENCES users(id),
+      task_id INTEGER NOT NULL REFERENCES tasks(id),
+      link_id INTEGER NOT NULL REFERENCES task_links(id),
+      worker_id TEXT NOT NULL DEFAULT '',
+      reward INTEGER NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS ledger (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL REFERENCES users(id),
+      kind TEXT NOT NULL CHECK (kind IN ('task','referral','earning','withdrawal','adjustment')),
+      amount INTEGER NOT NULL,
+      ref_id INTEGER,
+      note TEXT DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS withdrawals (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL REFERENCES users(id),
+      amount INTEGER NOT NULL,
+      upi TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved','rejected')),
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      decided_at TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS earning_options (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      description TEXT DEFAULT '',
+      reward INTEGER NOT NULL DEFAULT 1,
+      config TEXT NOT NULL DEFAULT '{}',
+      is_active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS earning_submissions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL REFERENCES users(id),
+      option_id INTEGER NOT NULL REFERENCES earning_options(id),
+      payload TEXT NOT NULL DEFAULT '{}',
+      status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved','rejected')),
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      decided_at TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS worker_manual_proxies (
+      worker_id TEXT PRIMARY KEY REFERENCES workers(id) ON DELETE CASCADE,
+      host TEXT NOT NULL,
+      port INTEGER NOT NULL,
+      username TEXT DEFAULT '',
+      password TEXT DEFAULT '',
+      type TEXT NOT NULL DEFAULT 'http',
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_completions_user ON task_completions(user_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_completions_task ON task_completions(task_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_ledger_user ON ledger(user_id, created_at);
   `);
 
   // Migration: workers gained display_name / enabled after the first
@@ -284,6 +392,114 @@ async function pgInit() {
 
     CREATE INDEX IF NOT EXISTS idx_links_status ON links(status);
     CREATE INDEX IF NOT EXISTS idx_proxies_active ON proxies(is_active);
+
+    -- WorkFlowX v2 tables (see ../v2/API_CONTRACT.md).
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+      name TEXT NOT NULL,
+      email TEXT NOT NULL UNIQUE,
+      mobile TEXT NOT NULL UNIQUE,
+      password_hash TEXT NOT NULL,
+      referral_code TEXT NOT NULL UNIQUE,
+      referred_by INTEGER REFERENCES users(id),
+      created_at TEXT NOT NULL DEFAULT to_char(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')
+    );
+
+    CREATE TABLE IF NOT EXISTS auth_tokens (
+      token TEXT PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      created_at TEXT NOT NULL DEFAULT to_char(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')
+    );
+
+    CREATE TABLE IF NOT EXISTS tasks (
+      id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+      name TEXT NOT NULL,
+      link_type TEXT NOT NULL DEFAULT 'shortener'
+        CHECK (link_type IN ('shortener','ad','view','video')),
+      script TEXT NOT NULL DEFAULT '[]',
+      reward INTEGER NOT NULL DEFAULT 1,
+      is_active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT to_char(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')
+    );
+
+    CREATE TABLE IF NOT EXISTS task_links (
+      id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+      task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+      url TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'queued' CHECK (status IN ('queued','done','failed')),
+      created_at TEXT NOT NULL DEFAULT to_char(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')
+    );
+
+    CREATE TABLE IF NOT EXISTS task_assignments (
+      task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      PRIMARY KEY (task_id, user_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS task_completions (
+      id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id),
+      task_id INTEGER NOT NULL REFERENCES tasks(id),
+      link_id INTEGER NOT NULL REFERENCES task_links(id),
+      worker_id TEXT NOT NULL DEFAULT '',
+      reward INTEGER NOT NULL,
+      created_at TEXT NOT NULL DEFAULT to_char(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')
+    );
+
+    CREATE TABLE IF NOT EXISTS ledger (
+      id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id),
+      kind TEXT NOT NULL CHECK (kind IN ('task','referral','earning','withdrawal','adjustment')),
+      amount INTEGER NOT NULL,
+      ref_id INTEGER,
+      note TEXT DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT to_char(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')
+    );
+
+    CREATE TABLE IF NOT EXISTS withdrawals (
+      id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id),
+      amount INTEGER NOT NULL,
+      upi TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved','rejected')),
+      created_at TEXT NOT NULL DEFAULT to_char(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS'),
+      decided_at TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS earning_options (
+      id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+      name TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      description TEXT DEFAULT '',
+      reward INTEGER NOT NULL DEFAULT 1,
+      config TEXT NOT NULL DEFAULT '{}',
+      is_active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT to_char(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')
+    );
+
+    CREATE TABLE IF NOT EXISTS earning_submissions (
+      id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id),
+      option_id INTEGER NOT NULL REFERENCES earning_options(id),
+      payload TEXT NOT NULL DEFAULT '{}',
+      status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved','rejected')),
+      created_at TEXT NOT NULL DEFAULT to_char(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS'),
+      decided_at TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS worker_manual_proxies (
+      worker_id TEXT PRIMARY KEY REFERENCES workers(id) ON DELETE CASCADE,
+      host TEXT NOT NULL,
+      port INTEGER NOT NULL,
+      username TEXT DEFAULT '',
+      password TEXT DEFAULT '',
+      type TEXT NOT NULL DEFAULT 'http',
+      updated_at TEXT NOT NULL DEFAULT to_char(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_completions_user ON task_completions(user_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_completions_task ON task_completions(task_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_ledger_user ON ledger(user_id, created_at);
   `);
 
   // Migration for databases created before display_name / enabled
@@ -603,6 +819,239 @@ const q = {
      ON CONFLICT(key) DO UPDATE SET value = excluded.value`
   ),
   listConfig: defineQuery('SELECT key, value FROM config'),
+
+  // --- WorkFlowX v2: users + auth tokens ---------------------------
+  getUserById: defineQuery('SELECT * FROM users WHERE id = ?'),
+  getUserByEmail: defineQuery('SELECT * FROM users WHERE email = ?'),
+  getUserByMobile: defineQuery('SELECT * FROM users WHERE mobile = ?'),
+  getUserByReferralCode: defineQuery('SELECT * FROM users WHERE referral_code = ?'),
+  insertUser: defineQuery(
+    'INSERT INTO users (name, email, mobile, password_hash, referral_code, referred_by) VALUES (?, ?, ?, ?, ?, ?)',
+    { returningId: true }
+  ),
+  listUsers: defineQuery('SELECT * FROM users ORDER BY id DESC'),
+  countUsers: defineQuery('SELECT COUNT(*) AS n FROM users', {
+    pg: 'SELECT COUNT(*)::int AS n FROM users',
+  }),
+  countReferrals: defineQuery('SELECT COUNT(*) AS n FROM users WHERE referred_by = ?', {
+    pg: 'SELECT COUNT(*)::int AS n FROM users WHERE referred_by = ?',
+  }),
+  deleteUser: defineQuery('DELETE FROM users WHERE id = ?'),
+
+  getAuthToken: defineQuery('SELECT * FROM auth_tokens WHERE token = ?'),
+  insertAuthToken: defineQuery('INSERT INTO auth_tokens (token, user_id) VALUES (?, ?)'),
+  deleteAuthToken: defineQuery('DELETE FROM auth_tokens WHERE token = ?'),
+  deleteUserTokens: defineQuery('DELETE FROM auth_tokens WHERE user_id = ?'),
+
+  // --- WorkFlowX v2: tasks -----------------------------------------
+  listTasks: defineQuery('SELECT * FROM tasks ORDER BY id DESC'),
+  getTask: defineQuery('SELECT * FROM tasks WHERE id = ?'),
+  insertTask: defineQuery(
+    'INSERT INTO tasks (name, link_type, script, reward) VALUES (?, ?, ?, ?)',
+    { returningId: true }
+  ),
+  updateTask: defineQuery(
+    'UPDATE tasks SET name = ?, link_type = ?, script = ?, reward = ?, is_active = ? WHERE id = ?'
+  ),
+  deleteTask: defineQuery('DELETE FROM tasks WHERE id = ?'),
+  listTaskLinks: defineQuery('SELECT * FROM task_links WHERE task_id = ? ORDER BY id ASC'),
+  getTaskLink: defineQuery('SELECT * FROM task_links WHERE id = ?'),
+  insertTaskLink: defineQuery(
+    'INSERT INTO task_links (task_id, url) VALUES (?, ?)',
+    { returningId: true }
+  ),
+  deleteTaskLink: defineQuery('DELETE FROM task_links WHERE id = ? AND task_id = ?'),
+  countTaskLinks: defineQuery('SELECT COUNT(*) AS n FROM task_links WHERE task_id = ?', {
+    pg: 'SELECT COUNT(*)::int AS n FROM task_links WHERE task_id = ?',
+  }),
+  countTaskCompletions: defineQuery('SELECT COUNT(*) AS n FROM task_completions WHERE task_id = ?', {
+    pg: 'SELECT COUNT(*)::int AS n FROM task_completions WHERE task_id = ?',
+  }),
+  listTaskAssignmentUserIds: defineQuery('SELECT user_id FROM task_assignments WHERE task_id = ? ORDER BY user_id ASC'),
+  clearTaskAssignments: defineQuery('DELETE FROM task_assignments WHERE task_id = ?'),
+  insertTaskAssignment: defineQuery('INSERT OR IGNORE INTO task_assignments (task_id, user_id) VALUES (?, ?)'),
+  // Tasks visible to a user: assigned to them, or open to all (no
+  // assignment rows), active only. Links inlined by the handler.
+  visibleTasksForUser: defineQuery(
+    `SELECT t.* FROM tasks t
+     WHERE t.is_active = 1 AND (
+       EXISTS (SELECT 1 FROM task_assignments ta WHERE ta.task_id = t.id AND ta.user_id = ?)
+       OR NOT EXISTS (SELECT 1 FROM task_assignments ta WHERE ta.task_id = t.id)
+     )
+     ORDER BY t.id ASC`
+  ),
+  taskHasAssignmentForUser: defineQuery(
+    'SELECT 1 AS x FROM task_assignments WHERE task_id = ? AND user_id = ?'
+  ),
+  taskHasAnyAssignment: defineQuery(
+    'SELECT 1 AS x FROM task_assignments WHERE task_id = ? LIMIT 1'
+  ),
+
+  // --- WorkFlowX v2: completions + ledger --------------------------
+  insertCompletion: defineQuery(
+    'INSERT INTO task_completions (user_id, task_id, link_id, worker_id, reward) VALUES (?, ?, ?, ?, ?)',
+    { returningId: true }
+  ),
+  countUserCompletions: defineQuery('SELECT COUNT(*) AS n FROM task_completions WHERE user_id = ?', {
+    pg: 'SELECT COUNT(*)::int AS n FROM task_completions WHERE user_id = ?',
+  }),
+  countUserCompletionsToday: defineQuery(
+    'SELECT COUNT(*) AS n FROM task_completions WHERE user_id = ? AND substr(created_at, 1, 10) = ?',
+    { pg: 'SELECT COUNT(*)::int AS n FROM task_completions WHERE user_id = ? AND substr(created_at, 1, 10) = ?' }
+  ),
+  countCompletionsToday: defineQuery(
+    'SELECT COUNT(*) AS n FROM task_completions WHERE substr(created_at, 1, 10) = ?',
+    { pg: 'SELECT COUNT(*)::int AS n FROM task_completions WHERE substr(created_at, 1, 10) = ?' }
+  ),
+  countWorkerCompletionsToday: defineQuery(
+    'SELECT COUNT(*) AS n FROM task_completions WHERE worker_id = ? AND substr(created_at, 1, 10) = ?',
+    { pg: 'SELECT COUNT(*)::int AS n FROM task_completions WHERE worker_id = ? AND substr(created_at, 1, 10) = ?' }
+  ),
+  countWorkerCompletions: defineQuery('SELECT COUNT(*) AS n FROM task_completions WHERE worker_id = ?', {
+    pg: 'SELECT COUNT(*)::int AS n FROM task_completions WHERE worker_id = ?',
+  }),
+  sumWorkerEarningsToday: defineQuery(
+    'SELECT COALESCE(SUM(reward), 0) AS n FROM task_completions WHERE worker_id = ? AND substr(created_at, 1, 10) = ?',
+    { pg: 'SELECT COALESCE(SUM(reward), 0)::int AS n FROM task_completions WHERE worker_id = ? AND substr(created_at, 1, 10) = ?' }
+  ),
+  recentCompletions: defineQuery(
+    `SELECT tc.id, u.name AS user_name, t.name AS task_name, tc.reward, tc.created_at
+     FROM task_completions tc
+     JOIN users u ON u.id = tc.user_id
+     JOIN tasks t ON t.id = tc.task_id
+     ORDER BY tc.id DESC LIMIT 20`
+  ),
+  listUserCompletions: defineQuery(
+    `SELECT tc.*, t.name AS task_name FROM task_completions tc
+     JOIN tasks t ON t.id = tc.task_id
+     WHERE tc.user_id = ? ORDER BY tc.id DESC LIMIT 20`
+  ),
+  deleteTaskCompletions: defineQuery('DELETE FROM task_completions WHERE task_id = ?'),
+
+  insertLedger: defineQuery(
+    'INSERT INTO ledger (user_id, kind, amount, ref_id, note) VALUES (?, ?, ?, ?, ?)',
+    { returningId: true }
+  ),
+  userBalance: defineQuery('SELECT COALESCE(SUM(amount), 0) AS n FROM ledger WHERE user_id = ?', {
+    pg: 'SELECT COALESCE(SUM(amount), 0)::int AS n FROM ledger WHERE user_id = ?',
+  }),
+  userReferralEarnings: defineQuery(
+    "SELECT COALESCE(SUM(amount), 0) AS n FROM ledger WHERE user_id = ? AND kind = 'referral'",
+    { pg: "SELECT COALESCE(SUM(amount), 0)::int AS n FROM ledger WHERE user_id = ? AND kind = 'referral'" }
+  ),
+  userLedger: defineQuery('SELECT * FROM ledger WHERE user_id = ? ORDER BY id DESC LIMIT 20'),
+  sumLedgerCreditsToday: defineQuery(
+    "SELECT COALESCE(SUM(amount), 0) AS n FROM ledger WHERE kind IN ('task','referral','earning') AND substr(created_at, 1, 10) = ?",
+    { pg: "SELECT COALESCE(SUM(amount), 0)::int AS n FROM ledger WHERE kind IN ('task','referral','earning') AND substr(created_at, 1, 10) = ?" }
+  ),
+  deleteUserLedger: defineQuery('DELETE FROM ledger WHERE user_id = ?'),
+
+  // --- WorkFlowX v2: withdrawals -----------------------------------
+  insertWithdrawal: defineQuery(
+    'INSERT INTO withdrawals (user_id, amount, upi) VALUES (?, ?, ?)',
+    { returningId: true }
+  ),
+  getWithdrawal: defineQuery('SELECT * FROM withdrawals WHERE id = ?'),
+  listUserWithdrawals: defineQuery('SELECT * FROM withdrawals WHERE user_id = ? ORDER BY id DESC'),
+  listWithdrawalsByStatus: defineQuery(
+    `SELECT w.*, u.name AS user_name, u.mobile AS user_mobile
+     FROM withdrawals w JOIN users u ON u.id = w.user_id
+     WHERE w.status = ? ORDER BY w.id DESC`
+  ),
+  listPendingWithdrawals: defineQuery(
+    `SELECT w.*, u.name AS user_name, u.mobile AS user_mobile
+     FROM withdrawals w JOIN users u ON u.id = w.user_id
+     WHERE w.status = 'pending' ORDER BY w.id DESC`
+  ),
+  listAllWithdrawals: defineQuery(
+    `SELECT w.*, u.name AS user_name, u.mobile AS user_mobile
+     FROM withdrawals w JOIN users u ON u.id = w.user_id
+     ORDER BY w.id DESC`
+  ),
+  getWithdrawalDetail: defineQuery(
+    `SELECT w.*, u.name AS user_name, u.mobile AS user_mobile
+     FROM withdrawals w JOIN users u ON u.id = w.user_id
+     WHERE w.id = ?`
+  ),
+  countPendingWithdrawals: defineQuery(
+    "SELECT COUNT(*) AS n FROM withdrawals WHERE status = 'pending'",
+    { pg: "SELECT COUNT(*)::int AS n FROM withdrawals WHERE status = 'pending'" }
+  ),
+  decideWithdrawal: defineQuery(
+    "UPDATE withdrawals SET status = ?, decided_at = datetime('now') WHERE id = ? AND status = 'pending'"
+  ),
+  deleteWithdrawal: defineQuery('DELETE FROM withdrawals WHERE id = ?'),
+
+  // --- WorkFlowX v2: earning options + submissions -----------------
+  listEarningOptions: defineQuery('SELECT * FROM earning_options ORDER BY id DESC'),
+  listActiveEarningOptions: defineQuery('SELECT * FROM earning_options WHERE is_active = 1 ORDER BY id ASC'),
+  getEarningOption: defineQuery('SELECT * FROM earning_options WHERE id = ?'),
+  insertEarningOption: defineQuery(
+    'INSERT INTO earning_options (name, kind, description, reward, config) VALUES (?, ?, ?, ?, ?)',
+    { returningId: true }
+  ),
+  updateEarningOption: defineQuery(
+    'UPDATE earning_options SET name = ?, kind = ?, description = ?, reward = ?, config = ?, is_active = ? WHERE id = ?'
+  ),
+  deleteEarningOption: defineQuery('DELETE FROM earning_options WHERE id = ?'),
+  countOptionSubmissions: defineQuery('SELECT COUNT(*) AS n FROM earning_submissions WHERE option_id = ?', {
+    pg: 'SELECT COUNT(*)::int AS n FROM earning_submissions WHERE option_id = ?',
+  }),
+  insertSubmission: defineQuery(
+    'INSERT INTO earning_submissions (user_id, option_id, payload) VALUES (?, ?, ?)',
+    { returningId: true }
+  ),
+  getSubmission: defineQuery('SELECT * FROM earning_submissions WHERE id = ?'),
+  listSubmissionsByStatus: defineQuery(
+    `SELECT s.*, u.name AS user_name, o.name AS option_name, o.reward AS reward
+     FROM earning_submissions s
+     JOIN users u ON u.id = s.user_id
+     JOIN earning_options o ON o.id = s.option_id
+     WHERE s.status = ? ORDER BY s.id DESC`
+  ),
+  listPendingSubmissions: defineQuery(
+    `SELECT s.*, u.name AS user_name, o.name AS option_name, o.reward AS reward
+     FROM earning_submissions s
+     JOIN users u ON u.id = s.user_id
+     JOIN earning_options o ON o.id = s.option_id
+     WHERE s.status = 'pending' ORDER BY s.id DESC`
+  ),
+  listAllSubmissions: defineQuery(
+    `SELECT s.*, u.name AS user_name, o.name AS option_name, o.reward AS reward
+     FROM earning_submissions s
+     JOIN users u ON u.id = s.user_id
+     JOIN earning_options o ON o.id = s.option_id
+     ORDER BY s.id DESC`
+  ),
+  getSubmissionDetail: defineQuery(
+    `SELECT s.*, u.name AS user_name, o.name AS option_name, o.reward AS reward
+     FROM earning_submissions s
+     JOIN users u ON u.id = s.user_id
+     JOIN earning_options o ON o.id = s.option_id
+     WHERE s.id = ?`
+  ),
+  countPendingSubmissions: defineQuery(
+    "SELECT COUNT(*) AS n FROM earning_submissions WHERE status = 'pending'",
+    { pg: "SELECT COUNT(*)::int AS n FROM earning_submissions WHERE status = 'pending'" }
+  ),
+  decideSubmission: defineQuery(
+    "UPDATE earning_submissions SET status = ?, decided_at = datetime('now') WHERE id = ? AND status = 'pending'"
+  ),
+  deleteOptionSubmissions: defineQuery('DELETE FROM earning_submissions WHERE option_id = ?'),
+  deleteUserSubmissions: defineQuery('DELETE FROM earning_submissions WHERE user_id = ?'),
+
+  // --- WorkFlowX v2: worker manual proxies -------------------------
+  ensureWorker: defineQuery('INSERT OR IGNORE INTO workers (id) VALUES (?)'),
+  getManualProxy: defineQuery('SELECT * FROM worker_manual_proxies WHERE worker_id = ?'),
+  upsertManualProxy: defineQuery(
+    `INSERT INTO worker_manual_proxies (worker_id, host, port, username, password, type, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+     ON CONFLICT(worker_id) DO UPDATE SET host = excluded.host,
+       port = excluded.port, username = excluded.username,
+       password = excluded.password, type = excluded.type,
+       updated_at = datetime('now')`
+  ),
+  deleteManualProxy: defineQuery('DELETE FROM worker_manual_proxies WHERE worker_id = ?'),
 };
 
 /* ------------------------------------------------------------------ */
@@ -706,6 +1155,10 @@ const DEFAULT_CONFIG = {
   cycle_timeout_seconds: 15,
   tabs_count: 6,
   captcha_solver_key: '',
+  // WorkFlowX v2
+  referral_enabled: 0,
+  referral_reward: 10,
+  task_reward_default: 1,
 };
 
 async function getConfigObject() {
