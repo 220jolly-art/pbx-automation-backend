@@ -133,14 +133,37 @@ later. Workers never hold the admin token.
   `DATABASE_URL`. When `DATABASE_URL` is unset, behaviour is exactly as
   before (SQLite `./data.db`). See `../HOSTING.md`.
 
+## Deploy on Vercel (free Hobby tier, no card)
+
+`api/index.js` exports the Express app for Vercel Serverless
+Functions (`vercel.json` rewrites every route to it). No `maxDuration`
+or other plan-gated options are set, so it validates on the free Hobby
+tier.
+
+Env vars (Vercel project Settings → Environment Variables):
+- `DATABASE_URL` — hosted Postgres connection string (Neon free tier:
+  use the **pooled** connection string). Required on Vercel: without
+  it the app falls back to a local SQLite file, which does not persist
+  between serverless invocations.
+- `ADMIN_TOKEN` — admin API token (`X-Admin-Token` header).
+
+`better-sqlite3` is only ever loaded when `DATABASE_URL` is unset
+(lazy require in `db.js`), so the Postgres-only serverless function
+never touches the native module. Deploy from the GitHub repo
+(`220jolly-art/pbx-automation-backend`): import the repo in Vercel,
+set the two env vars, deploy. The `render.yaml` in this repo targets
+Render and is ignored by Vercel.
+
 ## Files
 
 | File | Purpose |
 |------|---------|
 | `server.js` | Express app + all routes |
-| `db.js` | DB layer: SQLite (default) or Postgres via `pg` when `DATABASE_URL` is set — schema, proxy parser, config store, transactions |
+| `db.js` | DB layer: SQLite (default) or Postgres via `pg` when `DATABASE_URL` is set — schema, proxy parser, config store, transactions. Both adapters load lazily; the Postgres path never requires `better-sqlite3` |
+| `api/index.js` | Vercel Serverless entrypoint (exports the Express app) |
+| `vercel.json` | Vercel rewrites (all routes → `api/index.js`); no plan-gated options |
 | `seed.js` | Example data (`npm run seed`, `--reset` to wipe first) |
-| `render.yaml` | Render free deploy config |
+| `render.yaml` | Render free deploy config (ignored by Vercel) |
 | `.env.example` | Env template |
 | `package.json` | Deps: express, cors, better-sqlite3, pg |
 

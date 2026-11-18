@@ -9,6 +9,12 @@
  * only calls the functions exported here, so the switch is contained in
  * this one file. This is deliberately a thin abstraction — no ORM.
  *
+ * Loading: both adapters are created lazily (ensurePg / ensureSqlite).
+ * Requiring this file loads neither `pg` nor `better-sqlite3`, so the
+ * Postgres path never touches the native SQLite module — a serverless
+ * deploy that only uses Postgres (e.g. Vercel) cannot be killed at
+ * require time by a native-module load failure.
+ *
  * Interface contract (identical in both modes):
  *   - `q.<name>.all(...params)` -> Promise<rows[]>
  *   - `q.<name>.get(...params)` -> Promise<row | undefined>
@@ -68,9 +74,18 @@ const als = new AsyncLocalStorage();
 
 let pgPool = null;
 let sqliteDb = null;
-let dbPath = '';
+// dbPath needs no module load: Postgres reports a label, SQLite a file path.
+const dbPath = USE_PG
+  ? 'postgres (DATABASE_URL)'
+  : path.resolve(__dirname, DATABASE_PATH);
 
-if (USE_PG) {
+// Both adapters are created lazily: requiring this module loads neither
+// `pg` nor `better-sqlite3`. The Postgres path therefore never touches
+// the better-sqlite3 native module — a serverless deploy that only uses
+// Postgres (e.g. Vercel) cannot be killed at require time by a
+// native-module load failure, and vice versa.
+function ensurePg() {
+  if (pgPool) return pgPool;
   const { Pool } = require('pg');
   pgPool = new Pool({
     connectionString: DATABASE_URL,
@@ -80,8 +95,11 @@ if (USE_PG) {
     max: 10,
   });
   pgPool.on('error', (err) => console.error('[db] idle pg client error:', err.message));
-  dbPath = 'postgres (DATABASE_URL)';
-} else {
+  return pgPool;
+}
+
+function ensureSqlite() {
+  if (sqliteDb) return sqliteDb;
   let Database;
   try {
     Database = require('better-sqlite3');
@@ -90,12 +108,12 @@ if (USE_PG) {
     console.error('[db] Run `npm install` again, or fall back to the JSON-file store (see README.md).');
     process.exit(1);
   }
-  dbPath = path.resolve(__dirname, DATABASE_PATH);
   const dbDir = path.dirname(dbPath);
   if (!fs.existsSync(dbDir)) fs.mkdirSync(dbDir, { recursive: true });
   sqliteDb = new Database(dbPath);
   sqliteDb.pragma('journal_mode = WAL');
   sqliteDb.pragma('foreign_keys = ON');
+  return sqliteDb;
 }
 
 /* ------------------------------------------------------------------ */
@@ -125,7 +143,8 @@ function sqliteToPg(sql) {
 /* ------------------------------------------------------------------ */
 
 function sqliteInit() {
-  sqliteDb.exec(`
+  const sqlite = ensureSqlite();
+  sqlite.exec(`
     CREATE TABLE IF NOT EXISTS proxies (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       host TEXT NOT NULL,
@@ -193,17 +212,18 @@ function sqliteInit() {
 
   // Migration: workers gained display_name / enabled after the first
   // release. Older data.db files get the columns added on startup.
-  const workerCols = sqliteDb.prepare('PRAGMA table_info(workers)').all().map((c) => c.name);
+  const workerCols = sqlite.prepare('PRAGMA table_info(workers)').all().map((c) => c.name);
   if (!workerCols.includes('display_name')) {
-    sqliteDb.exec("ALTER TABLE workers ADD COLUMN display_name TEXT NOT NULL DEFAULT ''");
+    sqlite.exec("ALTER TABLE workers ADD COLUMN display_name TEXT NOT NULL DEFAULT ''");
   }
   if (!workerCols.includes('enabled')) {
-    sqliteDb.exec('ALTER TABLE workers ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1');
+    sqlite.exec('ALTER TABLE workers ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1');
   }
 }
 
 async function pgInit() {
-  await pgPool.query(`
+  const pool = ensurePg();
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS proxies (
       id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
       host TEXT NOT NULL,
@@ -268,15 +288,15 @@ async function pgInit() {
 
   // Migration for databases created before display_name / enabled
   // existed (fresh databases already have them from the DDL above).
-  const cols = await pgPool.query(
+  const cols = await pool.query(
     "SELECT column_name FROM information_schema.columns WHERE table_name = 'workers'"
   );
   const names = new Set(cols.rows.map((r) => r.column_name));
   if (!names.has('display_name')) {
-    await pgPool.query("ALTER TABLE workers ADD COLUMN display_name TEXT NOT NULL DEFAULT ''");
+    await pool.query("ALTER TABLE workers ADD COLUMN display_name TEXT NOT NULL DEFAULT ''");
   }
   if (!names.has('enabled')) {
-    await pgPool.query('ALTER TABLE workers ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1');
+    await pool.query('ALTER TABLE workers ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1');
   }
 }
 
@@ -299,12 +319,12 @@ async function ensureReady() {
   if (USE_PG) await init();
 }
 
-// SQLite: schema must exist before statements are prepared (the
-// better-sqlite3 statements below are prepared eagerly at require
-// time), so init() runs here at load. server.js / seed.js calling
-// init() again is a harmless no-op. Postgres statements are not
-// prepared — ensureReady() (called by every query) creates the schema
-// on first use instead.
+// SQLite: init() runs here at load so direct db.js consumers still see
+// a ready database; server.js / seed.js calling init() again is a
+// harmless no-op. Statements are prepared lazily on first use (see
+// defineQuery), so the schema is in place by then. Postgres statements
+// are not prepared — ensureReady() (called by every query) creates the
+// schema on first use instead.
 if (!USE_PG) init();
 
 /* ------------------------------------------------------------------ */
@@ -407,7 +427,7 @@ function withMutex(fn) {
 async function pgExec(pgSql, params) {
   await ensureReady();
   const store = als.getStore();
-  const executor = store && store.kind === 'pg' ? store.client : pgPool;
+  const executor = store && store.kind === 'pg' ? store.client : ensurePg();
   return executor.query(pgSql, params);
 }
 
@@ -438,12 +458,20 @@ function defineQuery(sqliteSql, opts = {}) {
       },
     };
   }
-  const stmt = sqliteDb.prepare(sqliteSql);
+  // Prepared lazily on first use so requiring this module never loads
+  // better-sqlite3 (see ensureSqlite above). The schema is created by
+  // init(), which runs at require time in SQLite mode and before
+  // listening in server.js, so by first use the tables exist.
+  let stmt = null;
+  const getStmt = () => {
+    if (!stmt) stmt = ensureSqlite().prepare(sqliteSql);
+    return stmt;
+  };
   return {
-    all: (...params) => sqliteExec(() => stmt.all(...params)),
-    get: (...params) => sqliteExec(() => stmt.get(...params)),
+    all: (...params) => sqliteExec(() => getStmt().all(...params)),
+    get: (...params) => sqliteExec(() => getStmt().get(...params)),
     run: (...params) => sqliteExec(() => {
-      const info = stmt.run(...params);
+      const info = getStmt().run(...params);
       return { changes: info.changes, lastInsertRowid: info.lastInsertRowid };
     }),
   };
@@ -586,27 +614,28 @@ const q = {
 // (same as better-sqlite3's native nested transactions).
 function sqliteTransaction(fn) {
   return async (...args) => {
+    const sqlite = ensureSqlite();
     const store = als.getStore();
     if (store && store.kind === 'sqlite-tx') {
       const sp = `sp_${++store.depth}`;
-      sqliteDb.exec(`SAVEPOINT ${sp}`);
+      sqlite.exec(`SAVEPOINT ${sp}`);
       try {
         const out = await fn(...args);
-        sqliteDb.exec(`RELEASE ${sp}`);
+        sqlite.exec(`RELEASE ${sp}`);
         return out;
       } catch (err) {
-        try { sqliteDb.exec(`ROLLBACK TO ${sp}; RELEASE ${sp}`); } catch { /* ignore */ }
+        try { sqlite.exec(`ROLLBACK TO ${sp}; RELEASE ${sp}`); } catch { /* ignore */ }
         throw err;
       }
     }
     return withMutex(async () => {
-      sqliteDb.exec('BEGIN IMMEDIATE');
+      sqlite.exec('BEGIN IMMEDIATE');
       try {
         const out = await als.run({ kind: 'sqlite-tx', depth: 0 }, () => fn(...args));
-        sqliteDb.exec('COMMIT');
+        sqlite.exec('COMMIT');
         return out;
       } catch (err) {
-        try { sqliteDb.exec('ROLLBACK'); } catch { /* ignore */ }
+        try { sqlite.exec('ROLLBACK'); } catch { /* ignore */ }
         throw err;
       }
     });
@@ -633,7 +662,7 @@ function pgTransaction(fn) {
         throw err;
       }
     }
-    const client = await pgPool.connect();
+    const client = await ensurePg().connect();
     try {
       await client.query('BEGIN');
       const out = await als.run({ kind: 'pg', client, depth: 0 }, () => fn(...args));
@@ -649,21 +678,23 @@ function pgTransaction(fn) {
 }
 
 // `db` exposes only what server.js / seed.js use: transaction() and
-// exec(). In SQLite mode it is the better-sqlite3 instance itself
-// (transaction overridden with the async wrapper above); in Postgres
-// mode it is a small facade over the pool.
+// exec(). In both modes it is a small facade — over the lazily-loaded
+// better-sqlite3 instance in SQLite mode, over the pool in Postgres
+// mode — so no caller ever touches a raw adapter object.
 let db;
 if (USE_PG) {
   db = {
     transaction: pgTransaction,
     exec: async (sql) => {
       await ensureReady();
-      await pgPool.query(sql);
+      await ensurePg().query(sql);
     },
   };
 } else {
-  db = sqliteDb;
-  db.transaction = sqliteTransaction;
+  db = {
+    transaction: sqliteTransaction,
+    exec: (sql) => ensureSqlite().exec(sql),
+  };
 }
 
 /* ------------------------------------------------------------------ */
