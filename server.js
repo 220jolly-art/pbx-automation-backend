@@ -586,7 +586,7 @@ function parseScriptJson(text) {
 }
 // Validate a task script: array (or JSON string of one) of objects,
 // each with a known step type. Returns {script} or {error}.
-const SCRIPT_STEP_TYPES = ['wait', 'scroll', 'click', 'wait_for'];
+const SCRIPT_STEP_TYPES = ['wait', 'scroll', 'click', 'wait_for', 'wait_for_enabled', 'wait_for_href'];
 function parseScript(input) {
   if (input === undefined) return { script: [] };
   let arr = input;
@@ -596,7 +596,7 @@ function parseScript(input) {
   if (!Array.isArray(arr)) return { error: 'script must be an array of steps' };
   for (const step of arr) {
     if (!step || typeof step !== 'object' || !SCRIPT_STEP_TYPES.includes(step.type)) {
-      return { error: 'each script step must be an object with a known type (wait, scroll, click, wait_for)' };
+      return { error: 'each script step must be an object with a known type (wait, scroll, click, wait_for, wait_for_enabled, wait_for_href)' };
     }
   }
   return { script: arr };
