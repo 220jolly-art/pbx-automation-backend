@@ -88,6 +88,7 @@ function rowWorker(r) {
   if (!r) return null;
   return {
     id: r.id,
+    user_id: r.user_id || null,
     display_name: r.display_name || '',
     enabled: r.enabled === undefined ? true : !!r.enabled,
     deviceInfo: r.device_info || '',
@@ -704,6 +705,11 @@ app.post('/api/auth/register', asyncHandler(async (req, res) => {
     }
     throw err;
   }
+  // Link this device's pre-login worker row to the new user (best-effort;
+  // auth must never fail on a stale/missing workerId).
+  if (typeof b.workerId === 'string' && b.workerId.trim()) {
+    try { await dbLayer.q.linkWorkerToUser.run(userId, b.workerId.trim()); } catch (e) { console.error('[server] link worker failed:', e.message); }
+  }
   res.status(201).json({ user: publicUser(await dbLayer.q.getUserById.get(userId)), token });
 }));
 
@@ -724,6 +730,10 @@ app.post('/api/auth/login', asyncHandler(async (req, res) => {
   }
   const token = crypto.randomBytes(32).toString('hex');
   await dbLayer.q.insertAuthToken.run(token, user.id);
+  // Link this device's pre-login worker row to the user (best-effort).
+  if (typeof b.workerId === 'string' && b.workerId.trim()) {
+    try { await dbLayer.q.linkWorkerToUser.run(user.id, b.workerId.trim()); } catch (e) { console.error('[server] link worker failed:', e.message); }
+  }
   res.json({ user: publicUser(user), token });
 }));
 
@@ -795,7 +805,8 @@ app.get('/api/tasks/:id', requireAdmin, asyncHandler(async (req, res) => {
   const links = (await dbLayer.q.listTaskLinks.all(task.id)).map((l) => ({
     id: l.id, url: l.url, status: l.status, created_at: l.created_at,
   }));
-  res.json({ ...rowTask(task), links });
+  const assigned_user_ids = (await dbLayer.q.listTaskAssignmentUserIds.all(task.id)).map((r) => r.user_id);
+  res.json({ ...rowTask(task), links, assigned_user_ids });
 }));
 
 app.put('/api/tasks/:id', requireAdmin, asyncHandler(async (req, res) => {
@@ -1242,10 +1253,11 @@ app.delete('/api/users/:id', requireAdmin, asyncHandler(async (req, res) => {
 
 app.get('/api/admin/stats', requireAdmin, asyncHandler(async (req, res) => {
   const today = todayUtc();
-  const [users, workers, completionsToday, earningsToday, pendingW, pendingS, recent, pendingWithdrawals] = await Promise.all([
+  const [users, workers, completionsToday, distinctTasksToday, earningsToday, pendingW, pendingS, recent, pendingWithdrawals] = await Promise.all([
     dbLayer.q.countUsers.get(),
     dbLayer.q.listWorkers.all(),
     dbLayer.q.countCompletionsToday.get(today),
+    dbLayer.q.countDistinctTasksToday.get(today),
     dbLayer.q.sumLedgerCreditsToday.get(today),
     dbLayer.q.countPendingWithdrawals.get(),
     dbLayer.q.countPendingSubmissions.get(),
@@ -1268,7 +1280,7 @@ app.get('/api/admin/stats', requireAdmin, asyncHandler(async (req, res) => {
     totals: {
       users: users.n,
       workers: workers.length,
-      tasks_today: completionsToday.n,
+      tasks_today: distinctTasksToday.n,
       completions_today: completionsToday.n,
       earnings_today: earningsToday.n,
       pending_withdrawals: pendingW.n,

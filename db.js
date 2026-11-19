@@ -171,6 +171,7 @@ function sqliteInit() {
 
     CREATE TABLE IF NOT EXISTS workers (
       id TEXT PRIMARY KEY,
+      user_id INTEGER,
       device_info TEXT DEFAULT '',
       completed_count INTEGER NOT NULL DEFAULT 0,
       active_link_id INTEGER,
@@ -336,6 +337,9 @@ function sqliteInit() {
   if (!workerCols.includes('enabled')) {
     sqlite.exec('ALTER TABLE workers ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1');
   }
+  if (!workerCols.includes('user_id')) {
+    sqlite.exec('ALTER TABLE workers ADD COLUMN user_id INTEGER');
+  }
 }
 
 async function pgInit() {
@@ -367,6 +371,7 @@ async function pgInit() {
 
     CREATE TABLE IF NOT EXISTS workers (
       id TEXT PRIMARY KEY,
+      user_id INTEGER,
       device_info TEXT DEFAULT '',
       completed_count INTEGER NOT NULL DEFAULT 0,
       active_link_id INTEGER,
@@ -531,6 +536,9 @@ async function pgInit() {
   }
   if (!names.has('enabled')) {
     await pool.query('ALTER TABLE workers ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1');
+  }
+  if (!names.has('user_id')) {
+    await pool.query('ALTER TABLE workers ADD COLUMN user_id INTEGER');
   }
 }
 
@@ -779,6 +787,10 @@ const q = {
   updateWorker: defineQuery(
     'UPDATE workers SET display_name = ?, enabled = ? WHERE id = ?'
   ),
+  // Link a pre-login worker row (created by /api/workers/register) to the
+  // user who just logged in / registered on that device. Best-effort:
+  // callers swallow errors so auth never fails on a stale workerId.
+  linkWorkerToUser: defineQuery('UPDATE workers SET user_id = ? WHERE id = ?'),
   deleteWorker: defineQuery('DELETE FROM workers WHERE id = ?'),
 
   // worker assignments + per-worker settings
@@ -924,6 +936,11 @@ const q = {
   countCompletionsToday: defineQuery(
     'SELECT COUNT(*) AS n FROM task_completions WHERE substr(created_at, 1, 10) = ?',
     { pg: 'SELECT COUNT(*)::int AS n FROM task_completions WHERE substr(created_at, 1, 10) = ?' }
+  ),
+  // Distinct tasks with at least one completion today (totals.tasks_today).
+  countDistinctTasksToday: defineQuery(
+    'SELECT COUNT(DISTINCT task_id) AS n FROM task_completions WHERE substr(created_at, 1, 10) = ?',
+    { pg: 'SELECT COUNT(DISTINCT task_id)::int AS n FROM task_completions WHERE substr(created_at, 1, 10) = ?' }
   ),
   countWorkerCompletionsToday: defineQuery(
     'SELECT COUNT(*) AS n FROM task_completions WHERE worker_id = ? AND substr(created_at, 1, 10) = ?',
