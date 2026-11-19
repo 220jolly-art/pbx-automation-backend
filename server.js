@@ -687,7 +687,10 @@ app.post('/api/auth/register', asyncHandler(async (req, res) => {
   const config = await dbLayer.getConfigObject();
   let userId;
   const tx = dbLayer.db.transaction(async () => {
-    const info = await dbLayer.q.insertUser.run(name, email, mobile, hash, code, referrer ? referrer.id : null);
+    // referred_by is only recorded when referral is enabled: otherwise
+    // the referrer's count would rise while no credit is ever paid.
+    const referredBy = referrer && config.referral_enabled === 1 ? referrer.id : null;
+    const info = await dbLayer.q.insertUser.run(name, email, mobile, hash, code, referredBy);
     userId = info.lastInsertRowid;
     await dbLayer.q.insertAuthToken.run(token, userId);
     if (referrer && config.referral_enabled === 1) {
